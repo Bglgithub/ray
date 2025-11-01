@@ -18,6 +18,7 @@ import (
 	"x-ui/util/common"
 	"x-ui/web/controller"
 	"x-ui/web/job"
+	"x-ui/web/middleware"
 	"x-ui/web/network"
 	"x-ui/web/service"
 
@@ -206,6 +207,13 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	s.index = controller.NewIndexController(g)
 	s.server = controller.NewServerController(g)
 	s.xui = controller.NewXUIController(g)
+
+	// 客户端API路由（需要API Key认证）
+	apiGroup := g.Group("/api/v1")
+	apiGroup.Use(middleware.APIAuthMiddleware())
+	clientAPI := controller.NewClientAPIController(apiGroup)
+	apiGroup.POST("/inbound/create", clientAPI.CreateInbound)
+	apiGroup.POST("/order/status", clientAPI.GetOrderStatus)
 
 	return engine, nil
 }

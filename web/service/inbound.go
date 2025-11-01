@@ -34,6 +34,11 @@ func (s *InboundService) GetAllInbounds() ([]*model.Inbound, error) {
 	return inbounds, nil
 }
 
+// CheckPortExist 检查端口是否已被占用（导出方法供外部调用）
+func (s *InboundService) CheckPortExist(port int, ignoreId int) (bool, error) {
+	return s.checkPortExist(port, ignoreId)
+}
+
 func (s *InboundService) checkPortExist(port int, ignoreId int) (bool, error) {
 	db := database.GetDB()
 	db = db.Model(model.Inbound{}).Where("port = ?", port)

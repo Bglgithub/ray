@@ -20,6 +20,11 @@ func getUriId(c *gin.Context) int64 {
 }
 
 func getRemoteIp(c *gin.Context) string {
+	return GetRemoteIp(c)
+}
+
+// GetRemoteIp 获取客户端IP地址（导出函数供中间件使用）
+func GetRemoteIp(c *gin.Context) string {
 	value := c.GetHeader("X-Forwarded-For")
 	if value != "" {
 		ips := strings.Split(value, ",")
@@ -57,6 +62,11 @@ func jsonMsgObj(c *gin.Context, msg string, obj interface{}, err error) {
 }
 
 func pureJsonMsg(c *gin.Context, success bool, msg string) {
+	PureJsonMsg(c, success, msg)
+}
+
+// PureJsonMsg 返回纯JSON消息（导出函数供中间件使用）
+func PureJsonMsg(c *gin.Context, success bool, msg string) {
 	if success {
 		c.JSON(http.StatusOK, entity.Msg{
 			Success: true,
