@@ -31,6 +31,7 @@ type Consumer struct {
 	CreatedAt     int64 `json:"createdAt" gorm:"autoCreateTime"` // 创建时间
 	LastLoginAt   int64 `json:"LastLoginAt"`                     //  最后登录时间
 	FreeExpiredAt int64 `json:"expiredAt"`                       // 免费试用过期时间，0表示过期
+	PaidUser      bool  `json:"PaidUser"`                        // 当前是否为付费用户
 	FromFlag      int   `json:"fromFlag"`                        // 来源标志
 }
 
