@@ -27,13 +27,16 @@ fi
 
 echo "上传部署脚本到服务器..."
 
-# 上传脚本
+# 上传脚本到 ubuntu 用户目录
 $SCP_CMD remote-build-deploy.sh "${REMOTE_USER}@${REMOTE_HOST}:~/"
 
-# 在服务器上设置执行权限
+# 同时复制到 root 目录（如果需要用 root 执行）
+$SSH_CMD "${REMOTE_USER}@${REMOTE_HOST}" "sudo cp ~/remote-build-deploy.sh /root/remote-build-deploy.sh && sudo chmod +x /root/remote-build-deploy.sh && sudo chmod +x ~/remote-build-deploy.sh" 2>/dev/null || \
 $SSH_CMD "${REMOTE_USER}@${REMOTE_HOST}" "chmod +x ~/remote-build-deploy.sh"
 
 echo "✅ 部署脚本已上传到服务器"
+echo "   - ubuntu 用户目录: ~/remote-build-deploy.sh"
+echo "   - root 用户目录: /root/remote-build-deploy.sh (如果可用)"
 echo ""
 echo "使用方法:"
 echo "1. SSH 登录服务器: $SSH_CMD ${REMOTE_USER}@${REMOTE_HOST}"

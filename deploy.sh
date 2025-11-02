@@ -2,8 +2,14 @@
 
 # x-ui 和 backend-proxy 一键部署脚本
 # 使用方法: ./deploy.sh
+#
+# 注意：从 macOS 交叉编译到 Linux 比较复杂，特别是使用 CGO 时
+# 推荐使用服务器端部署脚本: remote-build-deploy.sh
 
 set -e  # 遇到错误立即退出
+
+# 确保 PATH 包含常见的 Homebrew 路径（用于查找交叉编译工具）
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -37,7 +43,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     cat > "$CONFIG_FILE" << 'EOF'
 # 部署配置文件
 # 远程服务器信息
-REMOTE_HOST="16.176.193.236"
+REMOTE_HOST="your-server-ip-or-domain"
 REMOTE_USER="root"
 REMOTE_PORT="22"
 
@@ -62,7 +68,7 @@ BUILD_ARCH="amd64"  # amd64, arm64, 386
 BUILD_OS="linux"    # linux, darwin, windows
 
 # SSH 选项
-SSH_KEY="/Users/guolinbao/Desktop/vps/ula-rsa.pem"  # 如果使用密钥，填写密钥路径，如: ~/.ssh/id_rsa
+SSH_KEY=""  # 如果使用密钥，填写密钥路径，如: ~/.ssh/id_rsa
 EOF
     
     print_success "配置文件已创建: $CONFIG_FILE"
@@ -106,6 +112,32 @@ echo "  - x-ui: $XUI_DEPLOY_PATH"
 echo "  - backend-proxy: $BACKEND_PROXY_DEPLOY_PATH"
 echo ""
 
+# 检查是否从 macOS 交叉编译到 Linux
+if [ "$BUILD_OS" = "linux" ] && [ "$(go env GOOS 2>/dev/null)" = "darwin" ]; then
+    echo ""
+    print_warning "⚠️  检测到从 macOS 交叉编译到 Linux"
+    echo ""
+    print_info "交叉编译使用 CGO 时可能会遇到问题："
+    echo "  - 需要 Linux 交叉编译工具链"
+    echo "  - 需要正确配置 CGO 环境变量"
+    echo "  - 可能存在兼容性问题"
+    echo ""
+    print_info "推荐方案：使用服务器端部署脚本（已在服务器上）"
+    echo ""
+    print_success "服务器端脚本位置: ~/remote-build-deploy.sh"
+    print_success "服务器地址: ${REMOTE_HOST}"
+    echo ""
+    read -p "是否继续尝试本地交叉编译？(y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_info "已取消。推荐使用服务器端脚本："
+        echo "  ssh ${REMOTE_USER}@${REMOTE_HOST}"
+        echo "  ~/remote-build-deploy.sh"
+        exit 0
+    fi
+    echo ""
+fi
+
 # 1. 编译 x-ui
 print_info "步骤 1/6: 编译 x-ui 服务..."
 cd "$(dirname "$0")"
@@ -117,36 +149,125 @@ fi
 export GOOS="$BUILD_OS"
 export GOARCH="$BUILD_ARCH"
 
-# 注意：x-ui 使用了 go-sqlite3，需要 CGO 支持
-# 如果交叉编译到 Linux，需要安装交叉编译工具链
-# 推荐在目标服务器上编译，或者使用 CGO_ENABLED=1
-export CGO_ENABLED=1
+# 检测并设置交叉编译工具
+CC_FOUND=""
 
-# 对于 Linux 目标平台，设置 C 交叉编译器
 if [ "$BUILD_OS" = "linux" ] && [ "$(go env GOOS)" != "linux" ]; then
-    # 交叉编译到 Linux，需要设置 CC
-    # macOS 编译到 Linux 需要安装交叉编译工具
+    # 交叉编译到 Linux
     if [ "$(go env GOOS)" = "darwin" ]; then
-        # macOS 需要安装交叉编译工具
-        if command -v x86_64-linux-musl-gcc > /dev/null 2>&1; then
-            export CC=x86_64-linux-musl-gcc
+        # macOS 需要 Linux 交叉编译工具
+        print_info "检测交叉编译工具..."
+        
+        # 尝试多种方法查找 musl-cross
+        for test_path in \
+            "$(command -v x86_64-linux-musl-gcc 2>/dev/null)" \
+            "/opt/homebrew/bin/x86_64-linux-musl-gcc" \
+            "/usr/local/bin/x86_64-linux-musl-gcc" \
+            "$(which x86_64-linux-musl-gcc 2>/dev/null)"
+        do
+            if [ -n "$test_path" ] && [ -x "$test_path" ]; then
+                MUSL_GCC="$test_path"
+                print_info "找到 musl-cross: $MUSL_GCC"
+                
+                # 验证编译器
+                if "$MUSL_GCC" --version > /dev/null 2>&1; then
+                    CC_FOUND="$MUSL_GCC"
+                    break
+                fi
+            fi
+        done
+        
+        # 如果 musl 没找到，尝试 GNU 工具链
+        if [ -z "$CC_FOUND" ]; then
+            for test_path in \
+                "$(command -v x86_64-linux-gnu-gcc 2>/dev/null)" \
+                "/usr/bin/x86_64-linux-gnu-gcc"
+            do
+                if [ -n "$test_path" ] && [ -x "$test_path" ]; then
+                    if "$test_path" --version > /dev/null 2>&1; then
+                        CC_FOUND="$test_path"
+                        break
+                    fi
+                fi
+            done
+        fi
+        
+        # 设置编译器
+        if [ -n "$CC_FOUND" ]; then
+            export CC="$CC_FOUND"
             export CGO_ENABLED=1
+            
+            if [[ "$CC_FOUND" == *"musl"* ]]; then
+                # musl 交叉编译需要更多配置
+                export CGO_LDFLAGS="-static"
+                # 尝试找到 musl 的头文件和库路径
+                MUSL_PREFIX=$(dirname $(dirname "$CC_FOUND"))
+                if [ -d "$MUSL_PREFIX/x86_64-linux-musl" ]; then
+                    export CGO_CFLAGS="-I$MUSL_PREFIX/x86_64-linux-musl/include"
+                    export CGO_LDFLAGS="-L$MUSL_PREFIX/x86_64-linux-musl/lib -static"
+                    print_info "设置 musl 头文件路径: $MUSL_PREFIX/x86_64-linux-musl"
+                fi
+                print_success "使用 musl-cross 交叉编译工具: $CC"
+            else
+                print_success "使用 GNU 交叉编译工具: $CC"
+            fi
+            
+            # 验证编译器
+            print_info "验证编译器..."
+            if "$CC" --version > /dev/null 2>&1; then
+                COMPILER_VERSION=$("$CC" --version 2>&1 | head -1)
+                print_success "编译器验证成功: $COMPILER_VERSION"
+            else
+                print_error "编译器验证失败: $CC"
+                exit 1
+            fi
         else
-            print_warning "检测到交叉编译到 Linux，但未找到交叉编译工具"
-            print_info "选项 1: 安装交叉编译工具（推荐使用 musl-cross）"
-            print_info "选项 2: 在服务器上直接编译"
-            print_info "选项 3: 使用 Docker 编译"
-            print_warning "当前尝试继续编译，如果失败请在服务器上编译"
+            print_error "未找到可用的交叉编译工具"
+            echo ""
+            print_info "解决方案："
+            echo "  方案 1（强烈推荐）: 使用服务器端部署脚本"
+            echo "    已上传 remote-build-deploy.sh 到服务器: ${REMOTE_HOST}"
+            echo "    SSH 登录后执行: ~/remote-build-deploy.sh"
+            echo ""
+            echo "  方案 2: 安装 musl-cross"
+            echo "    brew install filosottile/musl-cross/musl-cross"
+            echo "    然后重新运行此脚本"
+            echo ""
+            print_error "当前无法继续编译，请选择上述方案之一"
+            exit 1
         fi
     fi
+else
+    # 同平台编译，直接启用 CGO
+    export CGO_ENABLED=1
 fi
 
 print_info "编译环境: GOOS=$GOOS, GOARCH=$GOARCH, CGO_ENABLED=$CGO_ENABLED"
+if [ -n "$CC" ]; then
+    print_info "C 编译器: $CC"
+    if [ -n "$CGO_CFLAGS" ]; then
+        print_info "CGO_CFLAGS: $CGO_CFLAGS"
+    fi
+    if [ -n "$CGO_LDFLAGS" ]; then
+        print_info "CGO_LDFLAGS: $CGO_LDFLAGS"
+    fi
+else
+    # 对于非交叉编译，不需要检查
+    if [ "$BUILD_OS" = "linux" ] && [ "$(go env GOOS)" != "linux" ]; then
+        print_error "未设置 C 编译器！"
+        print_error "从 macOS 交叉编译到 Linux 必须设置 CC 环境变量"
+        exit 1
+    fi
+fi
+
+print_info "开始编译..."
 go build -ldflags="-s -w" -o "$XUI_BINARY_NAME" ./
 if [ $? -eq 0 ]; then
     print_success "x-ui 编译成功"
 else
     print_error "x-ui 编译失败"
+    print_warning "如果是因为交叉编译问题，推荐使用服务器端脚本"
+    print_info "执行: ssh ${REMOTE_USER}@${REMOTE_HOST} && ~/remote-build-deploy.sh"
     exit 1
 fi
 
@@ -155,11 +276,39 @@ print_info "步骤 2/6: 编译 backend-proxy 服务..."
 cd backend-proxy
 
 # backend-proxy 也使用 sqlite，需要 CGO
-export CGO_ENABLED=1
-if [ "$BUILD_OS" = "linux" ] && [ "$(go env GOOS)" != "linux" ]; then
-    if [ "$(go env GOOS)" = "darwin" ] && command -v x86_64-linux-musl-gcc > /dev/null 2>&1; then
-        export CC=x86_64-linux-musl-gcc
+# 复用之前设置的 CC 和 CGO_ENABLED（在父 shell 中已经设置）
+# 如果之前没有设置 CC，尝试查找
+if [ -z "$CC" ] && [ "$BUILD_OS" = "linux" ] && [ "$(go env GOOS)" = "darwin" ]; then
+    MUSL_GCC=""
+    if command -v x86_64-linux-musl-gcc > /dev/null 2>&1; then
+        MUSL_GCC=$(command -v x86_64-linux-musl-gcc)
+    elif [ -f "/opt/homebrew/bin/x86_64-linux-musl-gcc" ]; then
+        MUSL_GCC="/opt/homebrew/bin/x86_64-linux-musl-gcc"
+    elif [ -f "/usr/local/bin/x86_64-linux-musl-gcc" ]; then
+        MUSL_GCC="/usr/local/bin/x86_64-linux-musl-gcc"
     fi
+    
+    if [ -n "$MUSL_GCC" ]; then
+        export CC="$MUSL_GCC"
+        export CGO_ENABLED=1
+        export CGO_LDFLAGS="-static"
+        MUSL_PREFIX=$(dirname $(dirname "$MUSL_GCC"))
+        if [ -d "$MUSL_PREFIX/x86_64-linux-musl" ]; then
+            export CGO_CFLAGS="-I$MUSL_PREFIX/x86_64-linux-musl/include"
+            export CGO_LDFLAGS="-L$MUSL_PREFIX/x86_64-linux-musl/lib -static"
+        fi
+    elif command -v x86_64-linux-gnu-gcc > /dev/null 2>&1; then
+        export CC=$(command -v x86_64-linux-gnu-gcc)
+        export CGO_ENABLED=1
+    else
+        export CGO_ENABLED=1
+    fi
+else
+    export CGO_ENABLED=1
+fi
+
+if [ -n "$CC" ]; then
+    print_info "backend-proxy 使用 C 编译器: $CC"
 fi
 
 go build -ldflags="-s -w" -o "$BACKEND_PROXY_BINARY_NAME" ./
@@ -167,6 +316,8 @@ if [ $? -eq 0 ]; then
     print_success "backend-proxy 编译成功"
 else
     print_error "backend-proxy 编译失败"
+    print_warning "如果是因为交叉编译问题，推荐使用服务器端脚本"
+    print_info "执行: ssh ${REMOTE_USER}@${REMOTE_HOST} && ~/remote-build-deploy.sh"
     exit 1
 fi
 
@@ -327,4 +478,7 @@ else
     echo "   cd $BACKEND_PROXY_DEPLOY_PATH && ./${BACKEND_PROXY_BINARY_NAME} &"
 fi
 echo ""
-
+print_info "💡 提示: 如果遇到交叉编译问题，使用服务器端脚本更简单："
+echo "   ssh ${REMOTE_USER}@${REMOTE_HOST}"
+echo "   ~/remote-build-deploy.sh"
+echo ""

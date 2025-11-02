@@ -29,7 +29,7 @@ print_warning() {
 }
 
 # 配置
-GIT_REPO_URL="${GIT_REPO_URL:-}"  # Git 仓库地址，如果为空则需要手动设置
+GIT_REPO_URL="https://github.com/Bglgithub/ray.git"  # Git 仓库地址，如果为空则需要手动设置
 BRANCH="${BRANCH:-main}"           # Git 分支，默认 main
 BUILD_DIR="/tmp/x-ui-build"         # 临时构建目录
 XUI_DEPLOY_PATH="/usr/local/x-ui"
@@ -41,6 +41,52 @@ echo "=========================================="
 print_info "开始自动编译和部署"
 echo "=========================================="
 echo ""
+
+# 检查并安装 C 编译器（gcc）
+print_info "检查 C 编译器（gcc）..."
+if ! command -v gcc &> /dev/null; then
+    print_warning "gcc 未安装，正在安装..."
+    
+    # 检测 Linux 发行版
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_ID="$ID"
+    else
+        OS_ID="unknown"
+    fi
+    
+    # 根据发行版安装 gcc
+    case "$OS_ID" in
+        ubuntu|debian)
+            print_info "检测到 Ubuntu/Debian，使用 apt 安装..."
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq gcc libc6-dev build-essential
+            ;;
+        centos|rhel|fedora)
+            print_info "检测到 CentOS/RHEL/Fedora，使用 yum/dnf 安装..."
+            if command -v dnf &> /dev/null; then
+                sudo dnf install -y -q gcc glibc-devel
+            else
+                sudo yum install -y -q gcc glibc-devel
+            fi
+            ;;
+        *)
+            print_error "无法自动识别 Linux 发行版，请手动安装 gcc"
+            print_info "Ubuntu/Debian: sudo apt-get install -y gcc build-essential"
+            print_info "CentOS/RHEL: sudo yum install -y gcc glibc-devel"
+            exit 1
+            ;;
+    esac
+    
+    # 验证安装
+    if ! command -v gcc &> /dev/null; then
+        print_error "gcc 安装失败，请手动安装"
+        exit 1
+    fi
+    print_success "gcc 安装成功: $(gcc --version | head -1)"
+else
+    print_success "gcc 已安装: $(gcc --version | head -1)"
+fi
 
 # 检查 Go 环境
 print_info "检查 Go 环境..."
@@ -70,6 +116,7 @@ fi
 # 设置 Go 环境
 export PATH=$PATH:/usr/local/go/bin
 export CGO_ENABLED=1
+print_info "启用 CGO 支持（CGO_ENABLED=1）"
 
 # 获取 Git 仓库地址（如果未设置）
 if [ -z "$GIT_REPO_URL" ]; then
@@ -157,6 +204,32 @@ sudo mkdir -p "$XUI_DEPLOY_PATH"
 sudo cp "$BUILD_DIR/x-ui" "$XUI_DEPLOY_PATH/x-ui"
 sudo chmod +x "$XUI_DEPLOY_PATH/x-ui"
 sudo chown root:root "$XUI_DEPLOY_PATH/x-ui"
+
+# 复制 bin 目录（包含 config.json、geosite.dat、geoip.dat、xray 二进制等）
+if [ -d "$BUILD_DIR/bin" ]; then
+    print_info "复制 bin 目录..."
+    sudo mkdir -p "$XUI_DEPLOY_PATH/bin"
+    
+    # 复制 bin 目录中的所有文件和子目录
+    sudo cp -r "$BUILD_DIR/bin"/* "$XUI_DEPLOY_PATH/bin/" 2>/dev/null || true
+    
+    # 设置权限
+    sudo chown -R root:root "$XUI_DEPLOY_PATH/bin" 2>/dev/null || true
+    sudo chmod -R 755 "$XUI_DEPLOY_PATH/bin" 2>/dev/null || true
+    
+    # 确保 xray 二进制有执行权限
+    if [ -f "$XUI_DEPLOY_PATH/bin/xray-linux-amd64" ]; then
+        sudo chmod +x "$XUI_DEPLOY_PATH/bin/xray-linux-amd64"
+    fi
+    if [ -f "$XUI_DEPLOY_PATH/bin/xray-linux-arm64" ]; then
+        sudo chmod +x "$XUI_DEPLOY_PATH/bin/xray-linux-arm64"
+    fi
+    
+    print_success "bin 目录复制完成"
+else
+    print_warning "未找到 bin 目录，请确保 bin 目录已存在于代码仓库中"
+fi
+
 print_success "x-ui 部署完成"
 
 # 部署 backend-proxy
@@ -176,6 +249,53 @@ if [ -f "$BUILD_DIR/backend-proxy/env.example" ]; then
 fi
 
 print_success "backend-proxy 部署完成"
+
+# 创建或更新 systemd 服务
+print_info "创建 systemd 服务..."
+
+# 创建 x-ui systemd 服务
+XUI_SERVICE_FILE="/etc/systemd/system/${XUI_SERVICE}.service"
+sudo tee "$XUI_SERVICE_FILE" > /dev/null << EOF
+[Unit]
+Description=x-ui Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${XUI_DEPLOY_PATH}
+ExecStart=${XUI_DEPLOY_PATH}/x-ui
+Restart=always
+RestartSec=5s
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 创建 backend-proxy systemd 服务
+BACKEND_PROXY_SERVICE_FILE="/etc/systemd/system/${BACKEND_PROXY_SERVICE}.service"
+sudo tee "$BACKEND_PROXY_SERVICE_FILE" > /dev/null << EOF
+[Unit]
+Description=Backend Proxy Service
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${BACKEND_PROXY_DEPLOY_PATH}
+ExecStart=${BACKEND_PROXY_DEPLOY_PATH}/backend-proxy
+Restart=always
+RestartSec=5s
+Environment="XUI_DB_PATH=/etc/x-ui/x-ui.db"
+Environment="XUI_SERVER_URL=http://localhost:54321"
+Environment="PROXY_PORT=8080"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo chmod 644 "$XUI_SERVICE_FILE" "$BACKEND_PROXY_SERVICE_FILE"
+print_success "systemd 服务文件创建完成"
 
 # 启动服务
 print_info "启动服务..."
