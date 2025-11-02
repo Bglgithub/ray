@@ -31,6 +31,8 @@ type Config struct {
 	ProxyPort       string // 后端代理服务端口
 	XUIDBPath       string // x-ui数据库路径
 	DefaultProtocol string // 默认协议（vmess/vless/trojan/shadowsocks）
+	ServerCDNAddr   string // 当前服务器CDN地址
+	ServerCountry   string // 当前服务器国家代码
 }
 
 var config Config
@@ -100,6 +102,8 @@ func main() {
 	config.ProxyPort = getEnv("PROXY_PORT", "8080")
 	config.XUIDBPath = getEnv("XUI_DB_PATH", "/etc/x-ui/x-ui.db")
 	config.DefaultProtocol = getEnv("DEFAULT_PROTOCOL", "shadowsocks")
+	config.ServerCDNAddr = getEnv("SERVER_CDN_ADDRESS", "")
+	config.ServerCountry = getEnv("SERVER_COUNTRY_CODE", "CN")
 
 	log.Println("[backend-proxy] 检测代理APIKey&APISecret...")
 	// 如果API Key或Secret为空，尝试自动创建
@@ -112,6 +116,17 @@ func main() {
 		config.APIKey = apiKey
 		config.APISecret = apiSecret
 		log.Printf("✅ 自动创建API Key成功: %s", apiKey)
+	}
+
+	// 初始化服务器站点数据库表
+	log.Println("[backend-proxy] 初始化服务器站点数据库表...")
+	if err := initServerSiteDB(); err != nil {
+		log.Printf("警告: 初始化服务器站点数据库表失败: %v", err)
+	} else {
+		// 自动插入当前服务器到数据库
+		if err := autoInsertCurrentServer(); err != nil {
+			log.Printf("警告: 自动插入当前服务器失败: %v", err)
+		}
 	}
 
 	// 设置Gin模式
@@ -134,11 +149,17 @@ func main() {
 	// 测试接口：快速创建/更新订单（方便测试，无需认证）
 	r.GET("/test/create-order", createOrUpdateOrderTest)
 
+	// 测试接口：快速创建服务器站点（方便测试，无需认证）
+	r.GET("/test/create-server", createServerSiteTest)
+
 	// API路由
 	api := r.Group("/api/v1")
 	{
 		api.POST("/inbound/create", createInboundProxy)
 		api.POST("/order/status", getOrderStatusProxy)
+
+		// 服务器站点管理接口
+		api.GET("/servers", getServerSitesList) // 获取服务器列表
 	}
 
 	// 启动服务

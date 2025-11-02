@@ -17,10 +17,21 @@ const (
 	Shadowsocks Protocol = "shadowsocks"
 )
 
+// 这里的user指的是admin用户
 type User struct {
 	Id       int    `json:"id" gorm:"primaryKey;autoIncrement"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+// 这里的consumer指的是消费者用户
+type Consumer struct {
+	Id            int   `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserId        int   `json:"userId"`
+	CreatedAt     int64 `json:"createdAt" gorm:"autoCreateTime"` // 创建时间
+	LastLoginAt   int64 `json:"LastLoginAt"`                     //  最后登录时间
+	FreeExpiredAt int64 `json:"expiredAt"`                       // 免费试用过期时间，0表示过期
+	FromFlag      int   `json:"fromFlag"`                        // 来源标志
 }
 
 type Inbound struct {
