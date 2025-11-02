@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<style>
+    @media (min-width: 769px) {
+        .ant-layout-content {
+            margin: 24px 16px;
+        }
+    }
+
+    .ant-col-sm-24 {
+        margin-top: 10px;
+    }
+
+    .status-tag {
+        margin-right: 8px;
+    }
+</style>
+<body>
+<a-layout id="app" v-cloak>
+    {{ template "commonSider" . }}
+    <a-layout id="content-layout">
+        <a-layout-content>
+            <a-spin :spinning="spinning" :delay="500" tip="loading">
+                <transition name="list" appear>
+                    <a-card hoverable style="margin-bottom: 20px;">
+                        <a-row>
+                            <a-col :xs="24" :sm="24" :lg="12">
+                                服务器总数：
+                                <a-tag color="blue">[[ servers.length ]]</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="12">
+                                可用服务器：
+                                <a-tag color="green">[[ availableCount ]]</a-tag>
+                            </a-col>
+                        </a-row>
+                    </a-card>
+                </transition>
+                <transition name="list" appear>
+                    <a-card hoverable>
+                        <div slot="title">
+                            <span>服务器列表</span>
+                        </div>
+                        <a-table :columns="columns" 
+                                 :row-key="record => record.id"
+                                 :data-source="servers" 
+                                 :pagination="pagination" 
+                                 @change="handleTableChange"
+                                 :loading="spinning"
+                                 :locale="{ emptyText: '暂无数据' }">
+                            <template slot="cdnAddress" slot-scope="text">
+                                <a-tag color="blue">[[ text ]]</a-tag>
+                            </template>
+                            <template slot="countryCode" slot-scope="text">
+                                <a-tag color="geekblue">[[ text ]]</a-tag>
+                            </template>
+                            <template slot="isAvailable" slot-scope="isAvailable">
+                                <a-tag :color="isAvailable ? 'green' : 'red'" class="status-tag">
+                                    [[ isAvailable ? '可用' : '不可用' ]]
+                                </a-tag>
+                            </template>
+                            <template slot="latency" slot-scope="latency">
+                                <template v-if="latency > 0">[[ latency ]] ms</template>
+                                <template v-else><span style="color: #999;">未测试</span></template>
+                            </template>
+                            <template slot="action" slot-scope="text, record">
+                                <a-button-group>
+                                    <a-popconfirm
+                                        title="确定要删除这个服务器吗？"
+                                        ok-text="确定"
+                                        cancel-text="取消"
+                                        @confirm="deleteServer(record)">
+                                        <a-button type="danger" size="small" icon="delete">删除</a-button>
+                                    </a-popconfirm>
+                                </a-button-group>
+                            </template>
+                        </a-table>
+                    </a-card>
+                </transition>
+            </a-spin>
+        </a-layout-content>
+    </a-layout>
+</a-layout>
+{{template "js" .}}
+<script>
+
+    const columns = [{
+        title: 'ID',
+        dataIndex: 'id',
+        key: 'id',
+        width: 60,
+        align: 'center',
+    }, {
+        title: 'CDN地址',
+        dataIndex: 'cdnAddress',
+        key: 'cdnAddress',
+        scopedSlots: { customRender: 'cdnAddress' },
+    }, {
+        title: '国家代码',
+        dataIndex: 'countryCode',
+        key: 'countryCode',
+        width: 120,
+        scopedSlots: { customRender: 'countryCode' },
+    }, {
+        title: '状态',
+        dataIndex: 'isAvailable',
+        key: 'isAvailable',
+        width: 100,
+        align: 'center',
+        scopedSlots: { customRender: 'isAvailable' },
+    }, {
+        title: '延迟',
+        dataIndex: 'latency',
+        key: 'latency',
+        width: 120,
+        align: 'center',
+        scopedSlots: { customRender: 'latency' },
+    }, {
+        title: '备注',
+        dataIndex: 'remark',
+        key: 'remark',
+    }, {
+        title: '创建时间',
+        dataIndex: 'createdAt',
+        key: 'createdAt',
+        width: 180,
+        align: 'center',
+        customRender: function(text, record) {
+            if (text) {
+                return moment(text * 1000).format('YYYY-MM-DD HH:mm:ss');
+            }
+            return '-';
+        },
+    }, {
+        title: '操作',
+        key: 'action',
+        width: 120,
+        align: 'center',
+        scopedSlots: { customRender: 'action' },
+    }];
+
+    const pagination = {
+        pageSize: 10,
+        showSizeChanger: true,
+        showTotal: (total) => `共 ${total} 条`,
+    };
+
+    const app = new Vue({
+        delimiters: ['[[', ']]'],
+        el: '#app',
+        data: {
+            siderDrawer,
+            spinning: false,
+            servers: [],
+            pagination: pagination,
+        },
+        computed: {
+            availableCount() {
+                return this.servers.filter(s => s.isAvailable).length;
+            }
+        },
+        mounted() {
+            this.getServers();
+        },
+        methods: {
+            loading(spinning = true) {
+                this.spinning = spinning;
+            },
+            async getServers() {
+                this.loading();
+                try {
+                    const msg = await HttpUtil.post('/xui/server-site/list');
+                    this.loading(false);
+                    if (!msg.success) {
+                        const errorMsg = msg.msg || '获取服务器列表失败';
+                        this.$message.error(errorMsg);
+                        console.error('获取服务器列表失败:', msg);
+                        // 即使失败也设置空数组，避免页面空白
+                        this.servers = [];
+                        return;
+                    }
+                    // msg.obj 包含服务器列表数组
+                    const serverList = (msg.obj && Array.isArray(msg.obj)) ? msg.obj : [];
+                    this.servers = serverList;
+                    console.log('获取到服务器列表:', serverList.length, '条');
+                } catch (error) {
+                    this.loading(false);
+                    const errorMsg = '获取服务器列表失败: ' + (error.message || error);
+                    this.$message.error(errorMsg);
+                    console.error('获取服务器列表异常:', error);
+                    // 即使失败也设置空数组，避免页面空白
+                    this.servers = [];
+                }
+            },
+            async deleteServer(server) {
+                this.loading();
+                try {
+                    const msg = await HttpUtil.post('/xui/server-site/del/' + server.id);
+                    this.loading(false);
+                    if (!msg.success) {
+                        this.$message.error(msg.msg || '删除服务器失败');
+                        return;
+                    }
+                    this.$message.success('删除服务器成功');
+                    await this.getServers(); // 重新加载列表
+                } catch (error) {
+                    this.loading(false);
+                    this.$message.error('删除服务器失败: ' + (error.message || error));
+                }
+            },
+            handleTableChange(pagination) {
+                this.pagination = pagination;
+            },
+        },
+    });
+
+</script>
+</body>
+</html>
+

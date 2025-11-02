@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<style>
+    @media (min-width: 769px) {
+        .ant-layout-content {
+            margin: 24px 16px;
+        }
+    }
+
+    .ant-col-sm-24 {
+        margin-top: 10px;
+    }
+
+    .status-tag {
+        margin-right: 8px;
+    }
+</style>
+<body>
+<a-layout id="app" v-cloak>
+    {{ template "commonSider" . }}
+    <a-layout id="content-layout">
+        <a-layout-content>
+            <a-spin :spinning="spinning" :delay="500" tip="loading">
+                <transition name="list" appear>
+                    <a-card hoverable style="margin-bottom: 20px;">
+                        <a-row>
+                            <a-col :xs="24" :sm="24" :lg="6">
+                                用户总数：
+                                <a-tag color="blue">[[ consumers.length ]]</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="6">
+                                付费用户：
+                                <a-tag color="gold">[[ paidUserCount ]]</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="6">
+                                有免费试用：
+                                <a-tag color="green">[[ freeTrialCount ]]</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="6">
+                                免费试用已过期：
+                                <a-tag color="red">[[ expiredCount ]]</a-tag>
+                            </a-col>
+                        </a-row>
+                    </a-card>
+                </transition>
+                <transition name="list" appear>
+                    <a-card hoverable>
+                        <div slot="title">
+                            <span>用户列表</span>
+                        </div>
+                        <a-table :columns="columns" 
+                                 :row-key="record => record.id"
+                                 :data-source="consumers" 
+                                 :pagination="pagination" 
+                                 @change="handleTableChange"
+                                 :loading="spinning"
+                                 :locale="{ emptyText: '暂无数据' }"
+                                 :scroll="{ x: 1200 }">
+                            <template slot="userId" slot-scope="userId">
+                                <a-tag color="blue">[[ userId ]]</a-tag>
+                            </template>
+                            <template slot="fromFlag" slot-scope="fromFlag">
+                                <a-tag color="geekblue">[[ getFromFlagText(fromFlag) ]]</a-tag>
+                            </template>
+                            <template slot="PaidUser" slot-scope="PaidUser">
+                                <a-tag :color="PaidUser ? 'gold' : 'default'" class="status-tag">
+                                    [[ PaidUser ? '付费用户' : '免费用户' ]]
+                                </a-tag>
+                            </template>
+                            <template slot="freeExpiredAt" slot-scope="record">
+                                <template v-if="record.expiredAt > 0 || record.freeExpiredAt > 0">
+                                    <template v-if="isExpired(record.expiredAt || record.freeExpiredAt)">
+                                        <a-tag color="red">
+                                            [[ formatTime(record.expiredAt || record.freeExpiredAt) ]]
+                                            (已过期)
+                                        </a-tag>
+                                    </template>
+                                    <template v-else>
+                                        <a-tag color="green">
+                                            [[ formatTime(record.expiredAt || record.freeExpiredAt) ]]
+                                            (有效)
+                                        </a-tag>
+                                    </template>
+                                </template>
+                                <span v-else style="color: #999;">无免费试用</span>
+                            </template>
+                            <template slot="createdAt" slot-scope="createdAt">
+                                <template v-if="createdAt > 0">
+                                    [[ formatTime(createdAt * 1000) ]]
+                                </template>
+                                <span v-else style="color: #999;">-</span>
+                            </template>
+                            <template slot="LastLoginAt" slot-scope="LastLoginAt">
+                                <template v-if="LastLoginAt > 0">
+                                    [[ formatTime(LastLoginAt) ]]
+                                </template>
+                                <span v-else style="color: #999;">从未登录</span>
+                            </template>
+                        </a-table>
+                    </a-card>
+                </transition>
+            </a-spin>
+        </a-layout-content>
+    </a-layout>
+</a-layout>
+{{template "js" .}}
+<script>
+
+    const columns = [{
+        title: 'ID',
+        dataIndex: 'id',
+        key: 'id',
+        width: 60,
+        align: 'center',
+    }, {
+        title: '用户ID',
+        dataIndex: 'userId',
+        key: 'userId',
+        width: 120,
+        scopedSlots: { customRender: 'userId' },
+    }, {
+        title: '来源标志',
+        dataIndex: 'fromFlag',
+        key: 'fromFlag',
+        width: 120,
+        align: 'center',
+        scopedSlots: { customRender: 'fromFlag' },
+    }, {
+        title: '用户类型',
+        dataIndex: 'PaidUser',
+        key: 'PaidUser',
+        width: 100,
+        align: 'center',
+        scopedSlots: { customRender: 'PaidUser' },
+    }, {
+        title: '免费试用过期时间',
+        key: 'expiredAt',
+        width: 200,
+        align: 'center',
+        scopedSlots: { customRender: 'freeExpiredAt' },
+    }, {
+        title: '创建时间',
+        dataIndex: 'createdAt',
+        key: 'createdAt',
+        width: 180,
+        align: 'center',
+        scopedSlots: { customRender: 'createdAt' },
+    }, {
+        title: '最后登录时间',
+        dataIndex: 'LastLoginAt',
+        key: 'LastLoginAt',
+        width: 180,
+        align: 'center',
+        scopedSlots: { customRender: 'LastLoginAt' },
+    }];
+
+    const pagination = {
+        pageSize: 10,
+        showSizeChanger: true,
+        showTotal: (total) => `共 ${total} 条`,
+    };
+
+    const app = new Vue({
+        delimiters: ['[[', ']]'],
+        el: '#app',
+        data: {
+            siderDrawer,
+            spinning: false,
+            consumers: [],
+            pagination: pagination,
+        },
+        computed: {
+            paidUserCount() {
+                return this.consumers.filter(c => c.PaidUser === true || c.PaidUser === 'true').length;
+            },
+            freeTrialCount() {
+                const now = Date.now();
+                return this.consumers.filter(c => {
+                    // 检查免费试用是否有效（注意：模型中使用 expiredAt 作为 JSON 字段名，但实际字段是 FreeExpiredAt）
+                    const expiredAt = c.expiredAt || c.freeExpiredAt || 0;
+                    return expiredAt > 0 && expiredAt > now;
+                }).length;
+            },
+            expiredCount() {
+                const now = Date.now();
+                return this.consumers.filter(c => {
+                    const expiredAt = c.expiredAt || c.freeExpiredAt || 0;
+                    return expiredAt > 0 && expiredAt <= now;
+                }).length;
+            }
+        },
+        mounted() {
+            this.getConsumers();
+        },
+        methods: {
+            loading(spinning = true) {
+                this.spinning = spinning;
+            },
+            async getConsumers() {
+                this.loading();
+                try {
+                    const msg = await HttpUtil.post('/xui/consumer/list');
+                    this.loading(false);
+                    if (!msg.success) {
+                        const errorMsg = msg.msg || '获取用户列表失败';
+                        this.$message.error(errorMsg);
+                        console.error('获取用户列表失败:', msg);
+                        this.consumers = [];
+                        return;
+                    }
+                    const consumerList = (msg.obj && Array.isArray(msg.obj)) ? msg.obj : [];
+                    this.consumers = consumerList;
+                    console.log('获取到用户列表:', consumerList.length, '条');
+                } catch (error) {
+                    this.loading(false);
+                    const errorMsg = '获取用户列表失败: ' + (error.message || error);
+                    this.$message.error(errorMsg);
+                    console.error('获取用户列表异常:', error);
+                    this.consumers = [];
+                }
+            },
+            getFromFlagText(fromFlag) {
+                // 根据来源标志返回文本，可以根据实际情况修改
+                const flagMap = {
+                    0: '未知',
+                    1: 'Android',
+                    2: 'iOS',
+                    3: 'Web',
+                    4: '其他'
+                };
+                return flagMap[fromFlag] || `标志${fromFlag}`;
+            },
+            isExpired(timestamp) {
+                // 检查时间戳是否已过期（毫秒级）
+                if (!timestamp || timestamp === 0) {
+                    return true;
+                }
+                return timestamp <= Date.now();
+            },
+            formatTime(timestamp) {
+                // timestamp 可能是秒级或毫秒级
+                let ts = timestamp;
+                if (ts < 10000000000) {
+                    // 如果是秒级时间戳（10位），转换为毫秒级
+                    ts = ts * 1000;
+                }
+                return moment(ts).format('YYYY-MM-DD HH:mm:ss');
+            },
+            handleTableChange(pagination) {
+                this.pagination = pagination;
+            },
+        },
+    });
+
+</script>
+</body>
+</html>
+

@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<style>
+    @media (min-width: 769px) {
+        .ant-layout-content {
+            margin: 24px 16px;
+        }
+    }
+
+    .ant-col-sm-24 {
+        margin-top: 10px;
+    }
+
+    .status-tag {
+        margin-right: 8px;
+    }
+</style>
+<body>
+<a-layout id="app" v-cloak>
+    {{ template "commonSider" . }}
+    <a-layout id="content-layout">
+        <a-layout-content>
+            <a-spin :spinning="spinning" :delay="500" tip="loading">
+                <transition name="list" appear>
+                    <a-card hoverable style="margin-bottom: 20px;">
+                        <a-row>
+                            <a-col :xs="24" :sm="24" :lg="8">
+                                订单总数：
+                                <a-tag color="blue">[[ orders.length ]]</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="8">
+                                待支付：
+                                <a-tag color="orange">[[ pendingCount ]]</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="8">
+                                已支付：
+                                <a-tag color="green">[[ paidCount ]]</a-tag>
+                            </a-col>
+                        </a-row>
+                        <a-row style="margin-top: 10px;">
+                            <a-col :xs="24" :sm="24" :lg="8">
+                                已使用：
+                                <a-tag color="cyan">[[ usedCount ]]</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="8">
+                                已过期：
+                                <a-tag color="red">[[ expiredCount ]]</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="8">
+                                总金额：
+                                <a-tag color="geekblue">¥[[ formatAmount(totalAmount) ]]</a-tag>
+                            </a-col>
+                        </a-row>
+                    </a-card>
+                </transition>
+                <transition name="list" appear>
+                    <a-card hoverable>
+                        <div slot="title">
+                            <span>订单列表</span>
+                        </div>
+                        <a-table :columns="columns" 
+                                 :row-key="record => record.id"
+                                 :data-source="orders" 
+                                 :pagination="pagination" 
+                                 @change="handleTableChange"
+                                 :loading="spinning"
+                                 :locale="{ emptyText: '暂无数据' }"
+                                 :scroll="{ x: 1400 }">
+                            <template slot="orderId" slot-scope="text">
+                                <a-tag color="blue">[[ text ]]</a-tag>
+                            </template>
+                            <template slot="userId" slot-scope="text">
+                                <a-tag color="geekblue">[[ text ]]</a-tag>
+                            </template>
+                            <template slot="status" slot-scope="status">
+                                <a-tag :color="getStatusColor(status)" class="status-tag">
+                                    [[ getStatusText(status) ]]
+                                </a-tag>
+                            </template>
+                            <template slot="amount" slot-scope="amount">
+                                <span v-if="amount > 0">¥[[ formatAmount(amount) ]]</span>
+                                <span v-else style="color: #999;">-</span>
+                            </template>
+                            <template slot="expiresAt" slot-scope="expiresAt">
+                                <template v-if="expiresAt > 0">
+                                    [[ formatTime(expiresAt) ]]
+                                </template>
+                                <span v-else style="color: #999;">永不过期</span>
+                            </template>
+                            <template slot="paidAt" slot-scope="paidAt">
+                                <template v-if="paidAt > 0">
+                                    [[ formatTime(paidAt) ]]
+                                </template>
+                                <span v-else style="color: #999;">-</span>
+                            </template>
+                            <template slot="usedAt" slot-scope="usedAt">
+                                <template v-if="usedAt > 0">
+                                    [[ formatTime(usedAt) ]]
+                                </template>
+                                <span v-else style="color: #999;">-</span>
+                            </template>
+                            <template slot="createdAt" slot-scope="createdAt">
+                                <template v-if="createdAt > 0">
+                                    [[ formatTime(createdAt * 1000) ]]
+                                </template>
+                                <span v-else style="color: #999;">-</span>
+                            </template>
+                            <template slot="inboundId" slot-scope="inboundId">
+                                <a-tag v-if="inboundId > 0" color="green">[[ inboundId ]]</a-tag>
+                                <span v-else style="color: #999;">-</span>
+                            </template>
+                        </a-table>
+                    </a-card>
+                </transition>
+            </a-spin>
+        </a-layout-content>
+    </a-layout>
+</a-layout>
+{{template "js" .}}
+<script>
+
+    const columns = [{
+        title: 'ID',
+        dataIndex: 'id',
+        key: 'id',
+        width: 60,
+        align: 'center',
+    }, {
+        title: '订单号',
+        dataIndex: 'orderId',
+        key: 'orderId',
+        scopedSlots: { customRender: 'orderId' },
+    }, {
+        title: '用户ID',
+        dataIndex: 'userId',
+        key: 'userId',
+        width: 120,
+        scopedSlots: { customRender: 'userId' },
+    }, {
+        title: '状态',
+        dataIndex: 'status',
+        key: 'status',
+        width: 100,
+        align: 'center',
+        scopedSlots: { customRender: 'status' },
+    }, {
+        title: '金额',
+        dataIndex: 'amount',
+        key: 'amount',
+        width: 100,
+        align: 'center',
+        scopedSlots: { customRender: 'amount' },
+    }, {
+        title: '过期时间',
+        dataIndex: 'expiresAt',
+        key: 'expiresAt',
+        width: 180,
+        align: 'center',
+        scopedSlots: { customRender: 'expiresAt' },
+    }, {
+        title: '支付时间',
+        dataIndex: 'paidAt',
+        key: 'paidAt',
+        width: 180,
+        align: 'center',
+        scopedSlots: { customRender: 'paidAt' },
+    }, {
+        title: '使用时间',
+        dataIndex: 'usedAt',
+        key: 'usedAt',
+        width: 180,
+        align: 'center',
+        scopedSlots: { customRender: 'usedAt' },
+    }, {
+        title: '入站ID',
+        dataIndex: 'inboundId',
+        key: 'inboundId',
+        width: 100,
+        align: 'center',
+        scopedSlots: { customRender: 'inboundId' },
+    }, {
+        title: '创建时间',
+        dataIndex: 'createdAt',
+        key: 'createdAt',
+        width: 180,
+        align: 'center',
+        scopedSlots: { customRender: 'createdAt' },
+    }, {
+        title: '备注',
+        dataIndex: 'remark',
+        key: 'remark',
+    }];
+
+    const pagination = {
+        pageSize: 10,
+        showSizeChanger: true,
+        showTotal: (total) => `共 ${total} 条`,
+    };
+
+    const app = new Vue({
+        delimiters: ['[[', ']]'],
+        el: '#app',
+        data: {
+            siderDrawer,
+            spinning: false,
+            orders: [],
+            pagination: pagination,
+        },
+        computed: {
+            pendingCount() {
+                return this.orders.filter(o => o.status === 'pending').length;
+            },
+            paidCount() {
+                return this.orders.filter(o => o.status === 'paid').length;
+            },
+            usedCount() {
+                return this.orders.filter(o => o.status === 'used').length;
+            },
+            expiredCount() {
+                return this.orders.filter(o => o.status === 'expired').length;
+            },
+            totalAmount() {
+                return this.orders.reduce((sum, order) => sum + (order.amount || 0), 0);
+            }
+        },
+        mounted() {
+            this.getOrders();
+        },
+        methods: {
+            loading(spinning = true) {
+                this.spinning = spinning;
+            },
+            async getOrders() {
+                this.loading();
+                try {
+                    const msg = await HttpUtil.post('/xui/order/list');
+                    this.loading(false);
+                    if (!msg.success) {
+                        const errorMsg = msg.msg || '获取订单列表失败';
+                        this.$message.error(errorMsg);
+                        console.error('获取订单列表失败:', msg);
+                        this.orders = [];
+                        return;
+                    }
+                    const orderList = (msg.obj && Array.isArray(msg.obj)) ? msg.obj : [];
+                    this.orders = orderList;
+                    console.log('获取到订单列表:', orderList.length, '条');
+                } catch (error) {
+                    this.loading(false);
+                    const errorMsg = '获取订单列表失败: ' + (error.message || error);
+                    this.$message.error(errorMsg);
+                    console.error('获取订单列表异常:', error);
+                    this.orders = [];
+                }
+            },
+            getStatusColor(status) {
+                const statusMap = {
+                    'pending': 'orange',
+                    'paid': 'green',
+                    'used': 'cyan',
+                    'expired': 'red'
+                };
+                return statusMap[status] || 'default';
+            },
+            getStatusText(status) {
+                const statusMap = {
+                    'pending': '待支付',
+                    'paid': '已支付',
+                    'used': '已使用',
+                    'expired': '已过期'
+                };
+                return statusMap[status] || status;
+            },
+            formatAmount(amount) {
+                // amount 是分为单位，转换为元
+                if (!amount || amount === 0) {
+                    return '0.00';
+                }
+                return (amount / 100).toFixed(2);
+            },
+            formatTime(timestamp) {
+                // timestamp 可能是秒级或毫秒级
+                let ts = timestamp;
+                if (ts < 10000000000) {
+                    // 如果是秒级时间戳（10位），转换为毫秒级
+                    ts = ts * 1000;
+                }
+                return moment(ts).format('YYYY-MM-DD HH:mm:ss');
+            },
+            handleTableChange(pagination) {
+                this.pagination = pagination;
+            },
+        },
+    });
+
+</script>
+</body>
+</html>
+
